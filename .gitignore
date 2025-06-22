@@ -1,0 +1,5 @@
+bin/
+obj/
+/packages/
+riderModule.iml
+appsettings.Development.json
