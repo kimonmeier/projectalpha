@@ -9,6 +9,47 @@ var builder = WebApplication.CreateBuilder(args);
 // Add services to the container.
 builder.Services.AddRazorComponents()
     .AddInteractiveWebAssemblyComponents();
+
+
+builder.Configuration
+    .AddEnvironmentVariables();
+
+builder.Services
+    .AddAuthorization()
+    .AddAuthentication(options =>
+    {
+        options.DefaultScheme = CookieAuthenticationDefaults.AuthenticationScheme;
+        options.DefaultChallengeScheme = DiscordAuthenticationDefaults.AuthenticationScheme;
+    })
+    .AddDiscord(options =>
+    {
+        options.ClientId = builder.Configuration["Discord:ClientId"];
+        options.ClientSecret = builder.Configuration["Discord:ClientSecret"];
+        options.CallbackPath = builder.Configuration["Discord:CallbackPath"];
+        options.SaveTokens = true;
+        
+        options.CorrelationCookie.SameSite = SameSiteMode.Lax;
+        options.CorrelationCookie.SecurePolicy = CookieSecurePolicy.Always;
+        
+        options.ClaimActions.MapCustomJson("urn:discord:avatar:url", user =>
+            string.Format(
+                CultureInfo.InvariantCulture,
+                "https://cdn.discordapp.com/avatars/{0}/{1}.{2}",
+                user.GetString("id"),
+                user.GetString("avatar"),
+                user.GetString("avatar")!.StartsWith("a_") ? "gif" : "png"));
+        
+        options.Scope.Add("identify");
+    })
+    .AddCookie(options =>
+    {
+        options.Cookie.Name = "DiscordAuth";
+        options.LoginPath = "/login";
+        options.LogoutPath = "/logout";
+        options.ExpireTimeSpan = TimeSpan.FromMinutes(30);
+        options.Cookie.SameSite = SameSiteMode.Lax;
+        options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+    });
     
 var app = builder.Build();
 
