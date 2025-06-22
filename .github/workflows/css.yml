@@ -24,7 +24,7 @@ jobs:
         cache-dependency-path: './ProjectAlpha/ProjectAlpha'
     - name: Install Node Libarys and build css
       run: | 
-        cd ./Streckenbuch.Server
+        cd ./ProjectAlpha/ProjectAlpha/
         npm ci
         npm run css:build
     - uses: stefanzweifel/git-auto-commit-action@v5
