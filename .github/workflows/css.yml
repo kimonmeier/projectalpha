@@ -21,7 +21,7 @@ jobs:
       with:
         node-version: 22.x
         cache: 'npm'
-        cache-dependency-path: './Streckenbuch.Server'
+        cache-dependency-path: './ProjectAlpha/ProjectAlpha'
     - name: Install Node Libarys and build css
       run: | 
         cd ./Streckenbuch.Server
