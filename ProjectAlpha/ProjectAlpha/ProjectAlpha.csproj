@@ -10,7 +10,7 @@
     <ItemGroup>
         <ProjectReference Include="..\ProjectAlpha.Client\ProjectAlpha.Client.csproj"/>
         <PackageReference Include="AspNet.Security.OAuth.Discord" Version="9.4.0" />
-        <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="9.0.1"/>
+        <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="9.0.6"/>
     </ItemGroup>
 
     <ItemGroup>
