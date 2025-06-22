@@ -9,7 +9,8 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddRazorComponents()
-    .AddInteractiveWebAssemblyComponents();
+    .AddInteractiveWebAssemblyComponents()
+    .AddAuthenticationStateSerialization(options => options.SerializeAllClaims = true);
 
 builder.Services.AddMudServices();
 

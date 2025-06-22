@@ -1,0 +1,84 @@
+﻿@using Microsoft.AspNetCore.Components.Authorization
+@inherits LayoutComponentBase
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<MudThemeProvider @ref="@_mudThemeProvider"
+                  Theme="@_baseTheme"
+                  IsDarkMode="true" />
+<MudPopoverProvider/>
+<MudDialogProvider/>
+<MudSnackbarProvider/>
+
+<MudLayout>
+    <MudAppBar Elevation="4" Dense="true">
+        <MudText Typo="Typo.h6">PixelBattle - Welche Kunst überlebt?</MudText>
+        <MudSpacer />
+        
+        @if (_isLoggedIn)
+        {
+            <MudAvatar>
+                <MudImage Src="@_avatarUrl" />
+            </MudAvatar>
+        }
+        else
+        {
+            <MudButton Href="/login">Login</MudButton>
+        }
+    </MudAppBar>
+    <MudMainContent>
+        @Body
+    </MudMainContent>
+</MudLayout>
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">🗙</span>
+</div>
+
+
+@code {
+    private MudThemeProvider _mudThemeProvider = null!;
+    private bool _isLoggedIn = false;
+    private string? _avatarUrl = null;
+
+    private MudTheme _baseTheme = new MudTheme()
+    {
+        LayoutProperties = new LayoutProperties()
+        {
+            DefaultBorderRadius = ".4rem"
+        }
+    };
+
+    protected async override Task OnInitializedAsync()
+    {
+        AuthenticationStateProvider.AuthenticationStateChanged += AuthenticationStateProviderOnAuthenticationStateChanged;
+
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        
+        UpdateUserAuthenticationStatus(state);
+    }
+
+    private void AuthenticationStateProviderOnAuthenticationStateChanged(Task<AuthenticationState> task)
+    {
+        task.ContinueWith(stateTask =>
+        {
+            var state = stateTask.Result;
+
+            UpdateUserAuthenticationStatus(state);
+        });
+    }
+
+    private void UpdateUserAuthenticationStatus(AuthenticationState state)
+    {
+
+        if (state.User.Identity is not null && state.User.Identity.IsAuthenticated)
+        {
+            _isLoggedIn = true;
+            _avatarUrl = state.User.Claims.First(x => x.Type == "urn:discord:avatar:url").Value;
+        }
+
+        InvokeAsync(StateHasChanged);
+    }
+
+}
