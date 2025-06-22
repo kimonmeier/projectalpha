@@ -3,3 +3,5 @@ obj/
 /packages/
 riderModule.iml
 appsettings.Development.json
+node_modules/
+.vscode/
