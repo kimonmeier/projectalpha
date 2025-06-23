@@ -10,7 +10,7 @@
 
 <button @onclick="Rerender">Rerender</button>
 <button @onclick="PrintBenchmark">Print Benchmark</button>
-<button @onclick="StartFpsSimulation">Print Benchmark</button>
+<button @onclick="StartFpsSimulation">Start FPS Simulation</button>
 
 <div>
     Frames rendered: @_framesRendered
@@ -21,7 +21,7 @@
 <div>
     Average FPS: @_averageFPS
 </div>
-<input type="number" class="text-black" @bind-value="_length" />
+<input type="number" class="text-black" @bind-value="_length"/>
 
 @code {
     private WebGLContext _context;
@@ -29,6 +29,10 @@
     private BECanvasComponent _canvasReference;
     private WebGLProgram _program;
     private BenchmarkHelper _benchmarkHelper = new BenchmarkHelper();
+
+    // Caching von WebGL-Objekten und dem Random-Generator
+    private WebGLBuffer _pixelBuffer;
+    private readonly Random _random = new();
 
     private uint _vertexPositionAttributeLocation;
     private uint _vertexColorAttributeLocation;
@@ -38,13 +42,13 @@
     private double _averageFPS = 0;
 
     private int _length = 100;
-    
+
     protected async override Task OnAfterRenderAsync(bool firstRender)
     {
-        _context = await _canvasReference.CreateWebGLAsync();
-
         if (firstRender)
         {
+            _context = await _canvasReference.CreateWebGLAsync(new WebGLContextAttributes() { Antialias = false });
+            
             await PrepareScene();
             await RenderScene();
         }
@@ -59,6 +63,18 @@
 
         _vertexPositionAttributeLocation = (uint)await _context.GetAttribLocationAsync(_program, "vertexPosition");
         _vertexColorAttributeLocation = (uint)await _context.GetAttribLocationAsync(_program, "a_color");
+
+        // Buffer einmalig erstellen
+        _pixelBuffer = await _context.CreateBufferAsync();
+        await _context.BindBufferAsync(BufferType.ARRAY_BUFFER, _pixelBuffer);
+
+        // Vertex-Attribute einmalig einrichten
+        const int stride = 5 * sizeof(float);
+        await _context.VertexAttribPointerAsync(_vertexPositionAttributeLocation, 2, DataType.FLOAT, false, stride, 0);
+        await _context.EnableVertexAttribArrayAsync(_vertexPositionAttributeLocation);
+
+        await _context.VertexAttribPointerAsync(_vertexColorAttributeLocation, 3, DataType.FLOAT, false, stride, 2 * sizeof(float));
+        await _context.EnableVertexAttribArrayAsync(_vertexColorAttributeLocation);
 
         _benchmarkHelper.Stop("PrepareScene");
     }
@@ -77,6 +93,7 @@
 
     private async Task<WebGLProgram> CreateShaders()
     {
+        // ... (Die CreateShaders-Methode bleibt unverändert)
         _benchmarkHelper.Start("CreateShaders");
         var vertexSharedSourceCode = @"#version 300 es
                                      precision mediump float;
@@ -149,59 +166,45 @@
     {
         _benchmarkHelper.Start("DrawPixels");
 
-        var random = new Random();
-        var vertexData = new List<float>();
         var size = (float)_length;
-        
-        for (int y = 0; y < size; y++)
+        var vertexCount = _length * _length * 6;
+        var vertexData = new float[vertexCount * 5]; // Direktes Array statt Liste
+        int index = 0;
+
+        for (int y = 0; y < _length; y++)
         {
             float startY = (y * 2 / size) - 1f;
             float endY = startY + (2 / size);
 
-            for (int x = 0; x < size; x++)
+            for (int x = 0; x < _length; x++)
             {
                 float startX = (x * 2 / size) - 1f;
                 float endX = startX + (2 / size);
-                var color = new Vector3((float)random.NextDouble(), (float)random.NextDouble(), (float)random.NextDouble());
+                
+                // Vermeidung von Objekt-Allokationen in der Schleife
+                var colorR = (float)_random.NextDouble();
+                var colorG = (float)_random.NextDouble();
+                var colorB = (float)_random.NextDouble();
 
-                // Ein Rechteck besteht aus zwei Dreiecken
+                // Vertex-Daten direkt ins Array schreiben
                 // Dreieck 1
-                vertexData.AddRange([
-                    startX, startY, color.X, color.Y, color.Z
-                ]); // Oben Links
-                vertexData.AddRange([
-                    endX, startY, color.X, color.Y, color.Z
-                ]); // Oben Rechts
-                vertexData.AddRange([
-                    startX, endY, color.X, color.Y, color.Z
-                ]); // Unten Links
+                vertexData[index++] = startX; vertexData[index++] = startY; vertexData[index++] = colorR; vertexData[index++] = colorG; vertexData[index++] = colorB;
+                vertexData[index++] = endX; vertexData[index++] = startY; vertexData[index++] = colorR; vertexData[index++] = colorG; vertexData[index++] = colorB;
+                vertexData[index++] = startX; vertexData[index++] = endY; vertexData[index++] = colorR; vertexData[index++] = colorG; vertexData[index++] = colorB;
 
                 // Dreieck 2
-                vertexData.AddRange([
-                    endX, startY, color.X, color.Y, color.Z
-                ]); // Oben Rechts
-                vertexData.AddRange([
-                    endX, endY, color.X, color.Y, color.Z
-                ]); // Unten Rechts
-                vertexData.AddRange([
-                    startX, endY, color.X, color.Y, color.Z
-                ]); // Unten Links
+                vertexData[index++] = endX; vertexData[index++] = startY; vertexData[index++] = colorR; vertexData[index++] = colorG; vertexData[index++] = colorB;
+                vertexData[index++] = endX; vertexData[index++] = endY; vertexData[index++] = colorR; vertexData[index++] = colorG; vertexData[index++] = colorB;
+                vertexData[index++] = startX; vertexData[index++] = endY; vertexData[index++] = colorR; vertexData[index++] = colorG; vertexData[index++] = colorB;
             }
         }
 
-        var pixelBuffer = await _context.CreateBufferAsync();
-        await _context.BindBufferAsync(BufferType.ARRAY_BUFFER, pixelBuffer);
-        await _context.BufferDataAsync(BufferType.ARRAY_BUFFER, vertexData.ToArray(), BufferUsageHint.DYNAMIC_DRAW);
+        // Bestehenden Buffer binden und nur die Daten aktualisieren
+        await _context.BindBufferAsync(BufferType.ARRAY_BUFFER, _pixelBuffer);
+        await _context.BufferDataAsync(BufferType.ARRAY_BUFFER, vertexData, BufferUsageHint.DYNAMIC_DRAW);
 
-        const int stride = 5 * sizeof(float);
-        await _context.VertexAttribPointerAsync(_vertexPositionAttributeLocation, 2, DataType.FLOAT, false, stride, 0);
-        await _context.EnableVertexAttribArrayAsync(_vertexPositionAttributeLocation);
-
-        await _context.VertexAttribPointerAsync(_vertexColorAttributeLocation, 3, DataType.FLOAT, false, stride, 2 * sizeof(float));
-        await _context.EnableVertexAttribArrayAsync(_vertexColorAttributeLocation);
-
-        await _context.DrawArraysAsync(Primitive.TRIANGLES, 0, vertexData.Count / 5);
-        await _context.DeleteBufferAsync(pixelBuffer);
+        await _context.DrawArraysAsync(Primitive.TRIANGLES, 0, vertexCount);
+        // Buffer nicht mehr löschen
 
         _benchmarkHelper.Stop("DrawPixels");
     }
@@ -213,7 +216,7 @@
 
     private void PrintBenchmark()
     {
-        this._benchmarkHelper.Print();
+        _benchmarkHelper.Print();
     }
 
     private async Task StartFpsSimulation()
@@ -222,7 +225,7 @@
 
         var runs = 0;
         var waitTime = TimeSpan.FromSeconds(10).TotalMilliseconds;
-        
+
         while (stopwatch.ElapsedMilliseconds < waitTime)
         {
             await RenderScene();
@@ -235,5 +238,4 @@
         _averageFrameRenderTime = waitTime / runs;
         _averageFPS = 1000 / _averageFrameRenderTime;
     }
-
 }
