@@ -1,12 +1,30 @@
-﻿@page "/"
+﻿@rendermode InteractiveWebAssembly
+@page "/"
 @using Microsoft.AspNetCore.Components.Authorization
+@using ProjectAlpha.Client.Components.HomePage
+@using ProjectAlpha.Client.Components.Game
 
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
 <PageTitle>PixelBattle - Welche Kunst überlebt?</PageTitle>
 
-
+@if (_isLoggedIn)
+{
+    <GameCanvas />
+}
+else
+{
+    <EventDescription />
+}
 
 @code {
+    private bool _isLoggedIn = false;
     
+    protected async override Task OnInitializedAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+
+        _isLoggedIn = state.User.Identity?.IsAuthenticated ?? false;
+    }
+
 }

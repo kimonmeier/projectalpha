@@ -24,4 +24,8 @@
       <_ContentIncludedByDefault Remove="Components\Layout\MainLayout.razor" />
     </ItemGroup>
 
+    <ItemGroup>
+      <Folder Include="wwwroot\js\" />
+    </ItemGroup>
+
 </Project>
