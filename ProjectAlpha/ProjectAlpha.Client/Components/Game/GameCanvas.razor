@@ -21,6 +21,7 @@
 <div>
     Average FPS: @_averageFPS
 </div>
+<input type="number" class="text-black" @bind-value="_length" />
 
 @code {
     private WebGLContext _context;
@@ -36,6 +37,8 @@
     private double _averageFrameRenderTime = 0;
     private double _averageFPS = 0;
 
+    private int _length = 100;
+    
     protected async override Task OnAfterRenderAsync(bool firstRender)
     {
         _context = await _canvasReference.CreateWebGLAsync();
@@ -148,46 +151,41 @@
 
         var random = new Random();
         var vertexData = new List<float>();
-
-        for (int y = 0; y < 100; y++)
+        var size = (float)_length;
+        
+        for (int y = 0; y < size; y++)
         {
-            float startY = (y * 2 / 100f) - 1f;
-            float endY = startY + (2 / 100f);
+            float startY = (y * 2 / size) - 1f;
+            float endY = startY + (2 / size);
 
-            for (int x = 0; x < 100; x++)
+            for (int x = 0; x < size; x++)
             {
-                float startX = (x * 2 / 100f) - 1f;
-                float endX = startX + (2 / 100f);
+                float startX = (x * 2 / size) - 1f;
+                float endX = startX + (2 / size);
                 var color = new Vector3((float)random.NextDouble(), (float)random.NextDouble(), (float)random.NextDouble());
 
                 // Ein Rechteck besteht aus zwei Dreiecken
                 // Dreieck 1
-                vertexData.AddRange(new[]
-                {
+                vertexData.AddRange([
                     startX, startY, color.X, color.Y, color.Z
-                }); // Oben Links
-                vertexData.AddRange(new[]
-                {
+                ]); // Oben Links
+                vertexData.AddRange([
                     endX, startY, color.X, color.Y, color.Z
-                }); // Oben Rechts
-                vertexData.AddRange(new[]
-                {
+                ]); // Oben Rechts
+                vertexData.AddRange([
                     startX, endY, color.X, color.Y, color.Z
-                }); // Unten Links
+                ]); // Unten Links
 
                 // Dreieck 2
-                vertexData.AddRange(new[]
-                {
+                vertexData.AddRange([
                     endX, startY, color.X, color.Y, color.Z
-                }); // Oben Rechts
-                vertexData.AddRange(new[]
-                {
+                ]); // Oben Rechts
+                vertexData.AddRange([
                     endX, endY, color.X, color.Y, color.Z
-                }); // Unten Rechts
-                vertexData.AddRange(new[]
-                {
+                ]); // Unten Rechts
+                vertexData.AddRange([
                     startX, endY, color.X, color.Y, color.Z
-                }); // Unten Links
+                ]); // Unten Links
             }
         }
 
@@ -222,7 +220,7 @@
         Stopwatch stopwatch = Stopwatch.StartNew();
 
         var runs = 0;
-        var waitTime = TimeSpan.FromSeconds(30).TotalMilliseconds;
+        var waitTime = TimeSpan.FromSeconds(10).TotalMilliseconds;
         
         while (stopwatch.ElapsedMilliseconds < waitTime)
         {
