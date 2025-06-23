@@ -201,6 +201,7 @@
         await _context.EnableVertexAttribArrayAsync(_vertexColorAttributeLocation);
 
         await _context.DrawArraysAsync(Primitive.TRIANGLES, 0, vertexData.Count / 5);
+        await _context.DeleteBufferAsync(pixelBuffer);
 
         _benchmarkHelper.Stop("DrawPixels");
     }
