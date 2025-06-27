@@ -4,13 +4,26 @@
 @using Blazor.Extensions.Canvas
 @using Blazor.Extensions.Canvas.Canvas2D
 @using Blazor.Extensions.Canvas.WebGL
+@using Microsoft.AspNetCore.Components.Web
 @using MudBlazor.Extensions
 
-<BECanvas Width="1000" Height="1000" @ref="_canvasReference"></BECanvas>
+<div class="w-full h-5/6 flex justify-center items-center background"
+     @onclick="HandleClick"
+     @onwheel="HandleWheel"
+     @onmousedown="HandleMouseDown"
+     @onmouseup="HandleMouseUp"
+     @onmousemove="HandleMouseMove"
+     @onmouseleave="HandleMouseUp"
+     tabindex="0">
+    <BECanvas Width="1000" Height="1000" @ref="_canvasReference"></BECanvas>
+</div>
 
-<button @onclick="Rerender">Rerender</button>
-<button @onclick="PrintBenchmark">Print Benchmark</button>
-<button @onclick="StartFpsSimulation">Start FPS Simulation</button>
+<!--
+<div class="w-full h-1/6 flex justify-center items-center">
+    <button @onclick="Rerender">Rerender</button>
+    <button @onclick="PrintBenchmark">Print Benchmark</button>
+    <button @onclick="StartFpsSimulation">Start FPS Simulation</button>
+</div>
 
 <div>
     Frames rendered: @_framesRendered
@@ -21,21 +34,39 @@
 <div>
     Average FPS: @_averageFPS
 </div>
-<input type="number" class="text-black" @bind-value="_length"/>
+<input type="number" class="text-black" @bind-value="_length"/>-->
+
+<style>
+    .background {
+        background-color: rgb(0.08, 0.08, 0.08);
+    }
+    
+</style>
 
 @code {
+    private class Pixel
+    {
+        public float R { get; set; }
+        public float G { get; set; }
+        public float B { get; set; }
+    }
+
     private WebGLContext _context;
 
     private BECanvasComponent _canvasReference;
     private WebGLProgram _program;
-    private BenchmarkHelper _benchmarkHelper = new BenchmarkHelper();
+    private readonly BenchmarkHelper _benchmarkHelper = new();
 
     // Caching von WebGL-Objekten und dem Random-Generator
     private WebGLBuffer _pixelBuffer;
     private readonly Random _random = new();
+    private Pixel[,] _pixels;
 
     private uint _vertexPositionAttributeLocation;
     private uint _vertexColorAttributeLocation;
+
+    private WebGLUniformLocation _panUniformLocation;
+    private WebGLUniformLocation _zoomUniformLocation;
 
     private int _framesRendered = 0;
     private double _averageFrameRenderTime = 0;
@@ -43,14 +74,46 @@
 
     private int _length = 100;
 
+    // View state
+    private float _panX = 0f;
+    private float _panY = 0f;
+    private float _zoom = 1f;
+
+    // Panning state
+    private bool _isPanning;
+    private double _lastMouseX;
+    private double _lastMouseY;
+    private bool _isDragging;
+
     protected async override Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender)
         {
-            _context = await _canvasReference.CreateWebGLAsync(new WebGLContextAttributes() { Antialias = false });
-            
+            _context = await _canvasReference.CreateWebGLAsync(new WebGLContextAttributes()
+            {
+                Antialias = false
+            });
+
+            InitializePixelGrid();
             await PrepareScene();
             await RenderScene();
+        }
+    }
+
+    private void InitializePixelGrid()
+    {
+        _pixels = new Pixel[_length, _length];
+        for (var y = 0; y < _length; y++)
+        {
+            for (var x = 0; x < _length; x++)
+            {
+                _pixels[x, y] = new Pixel
+                {
+                    R = 1,
+                    G = 1,
+                    B = 1
+                };
+            }
         }
     }
 
@@ -63,6 +126,9 @@
 
         _vertexPositionAttributeLocation = (uint)await _context.GetAttribLocationAsync(_program, "vertexPosition");
         _vertexColorAttributeLocation = (uint)await _context.GetAttribLocationAsync(_program, "a_color");
+        _panUniformLocation = await _context.GetUniformLocationAsync(_program, "u_pan");
+        _zoomUniformLocation = await _context.GetUniformLocationAsync(_program, "u_zoom");
+
 
         // Buffer einmalig erstellen
         _pixelBuffer = await _context.CreateBufferAsync();
@@ -83,9 +149,12 @@
     {
         _benchmarkHelper.Start("RenderScene");
         await _context.ViewportAsync(0, 0, 1000, 1000);
-        await _context.ClearColorAsync(0.08f, 0.08f, 0.08f, 1);
+        await _context.ClearColorAsync(0, 0, 0, 1);
         await _context.ClearAsync(BufferBits.COLOR_BUFFER_BIT);
         await _context.ClearAsync(BufferBits.DEPTH_BUFFER_BIT);
+
+        await _context.UniformAsync(_panUniformLocation, _panX, _panY);
+        await _context.UniformAsync(_zoomUniformLocation, _zoom);
 
         await DrawPixels();
         _benchmarkHelper.Stop("RenderScene");
@@ -101,10 +170,13 @@
                                      in vec2 vertexPosition;
                                      in vec3 a_color;
 
+                                     uniform vec2 u_pan;
+                                     uniform float u_zoom;
+
                                      out vec4 v_color;
 
                                      void main() {
-                                       gl_Position = vec4(vertexPosition, 0.0, 1.0);
+                                       gl_Position = vec4((vertexPosition * u_zoom) + u_pan, 0.0, 1.0);
                                        v_color = vec4(a_color, 1.0);
                                      }
 
@@ -125,9 +197,9 @@
                                      precision mediump float;
 
                                      in vec4 v_color;
-                                     
+
                                      out vec4 outColor;
-                                     
+
                                      void main() {
                                        outColor = v_color;
                                      }
@@ -167,47 +239,187 @@
         _benchmarkHelper.Start("DrawPixels");
 
         var size = (float)_length;
-        var vertexCount = _length * _length * 6;
-        var vertexData = new float[vertexCount * 5]; // Direktes Array statt Liste
+
+        // Berechnen Sie den sichtbaren Bereich in normalisierten Gerätekoordinaten (NDC)
+        var minX_ndc = (-1f - _panX) / _zoom;
+        var maxX_ndc = (1f - _panX) / _zoom;
+
+        // Konvertieren Sie den NDC-Bereich in den Gitter-Indexbereich
+        var minY_ndc = (-1f - _panY) / _zoom;
+        var maxY_ndc = (1f - _panY) / _zoom;
+
+        // Konvertieren Sie den NDC-Bereich in den Gitter-Indexbereich
+        var xStart = (int)Math.Floor((minX_ndc + 1f) / 2f * size);
+        var xEnd = (int)Math.Ceiling((maxX_ndc + 1f) / 2f * size);
+        var yStart = (int)Math.Floor((minY_ndc + 1f) / 2f * size);
+        var yEnd = (int)Math.Ceiling((maxY_ndc + 1f) / 2f * size);
+
+        // Klemmen Sie die Indizes auf den gültigen Bereich [0, _length]
+        xStart = Math.Max(0, xStart);
+        xEnd = Math.Min(_length, xEnd);
+        yStart = Math.Max(0, yStart);
+        yEnd = Math.Min(_length, yEnd);
+
+        var visibleQuadsX = xEnd - xStart;
+        var visibleQuadsY = yEnd - yStart;
+
+        var vertexCount = visibleQuadsX * visibleQuadsY * 6;
+
+        if (vertexCount == 0)
+        {
+            // Nichts zu zeichnen, da außerhalb des sichtbaren Bereichs
+            _benchmarkHelper.Stop("DrawPixels");
+            return;
+        }
+
+        var vertexData = new float[vertexCount * 5]; // 5 Floats pro Vertex (x, y, r, g, b)
         int index = 0;
 
-        for (int y = 0; y < _length; y++)
+        for (int y = yStart; y < yEnd; y++)
         {
             float startY = (y * 2 / size) - 1f;
             float endY = startY + (2 / size);
 
-            for (int x = 0; x < _length; x++)
+            for (int x = xStart; x < xEnd; x++)
             {
                 float startX = (x * 2 / size) - 1f;
                 float endX = startX + (2 / size);
-                
-                // Vermeidung von Objekt-Allokationen in der Schleife
-                var colorR = (float)_random.NextDouble();
-                var colorG = (float)_random.NextDouble();
-                var colorB = (float)_random.NextDouble();
 
-                // Vertex-Daten direkt ins Array schreiben
+                var pixel = _pixels[x, y];
+                var colorR = pixel.R;
+                var colorG = pixel.G;
+                var colorB = pixel.B;
+
                 // Dreieck 1
-                vertexData[index++] = startX; vertexData[index++] = startY; vertexData[index++] = colorR; vertexData[index++] = colorG; vertexData[index++] = colorB;
-                vertexData[index++] = endX; vertexData[index++] = startY; vertexData[index++] = colorR; vertexData[index++] = colorG; vertexData[index++] = colorB;
-                vertexData[index++] = startX; vertexData[index++] = endY; vertexData[index++] = colorR; vertexData[index++] = colorG; vertexData[index++] = colorB;
+                vertexData[index++] = startX;
+                vertexData[index++] = startY;
+                vertexData[index++] = colorR;
+                vertexData[index++] = colorG;
+                vertexData[index++] = colorB;
+                vertexData[index++] = endX;
+                vertexData[index++] = startY;
+                vertexData[index++] = colorR;
+                vertexData[index++] = colorG;
+                vertexData[index++] = colorB;
+                vertexData[index++] = startX;
+                vertexData[index++] = endY;
+                vertexData[index++] = colorR;
+                vertexData[index++] = colorG;
+                vertexData[index++] = colorB;
 
                 // Dreieck 2
-                vertexData[index++] = endX; vertexData[index++] = startY; vertexData[index++] = colorR; vertexData[index++] = colorG; vertexData[index++] = colorB;
-                vertexData[index++] = endX; vertexData[index++] = endY; vertexData[index++] = colorR; vertexData[index++] = colorG; vertexData[index++] = colorB;
-                vertexData[index++] = startX; vertexData[index++] = endY; vertexData[index++] = colorR; vertexData[index++] = colorG; vertexData[index++] = colorB;
+                vertexData[index++] = endX;
+                vertexData[index++] = startY;
+                vertexData[index++] = colorR;
+                vertexData[index++] = colorG;
+                vertexData[index++] = colorB;
+                vertexData[index++] = endX;
+                vertexData[index++] = endY;
+                vertexData[index++] = colorR;
+                vertexData[index++] = colorG;
+                vertexData[index++] = colorB;
+                vertexData[index++] = startX;
+                vertexData[index++] = endY;
+                vertexData[index++] = colorR;
+                vertexData[index++] = colorG;
+                vertexData[index++] = colorB;
             }
         }
 
-        // Bestehenden Buffer binden und nur die Daten aktualisieren
         await _context.BindBufferAsync(BufferType.ARRAY_BUFFER, _pixelBuffer);
         await _context.BufferDataAsync(BufferType.ARRAY_BUFFER, vertexData, BufferUsageHint.DYNAMIC_DRAW);
 
         await _context.DrawArraysAsync(Primitive.TRIANGLES, 0, vertexCount);
-        // Buffer nicht mehr löschen
 
         _benchmarkHelper.Stop("DrawPixels");
     }
+
+    private async Task HandleClick(MouseEventArgs e)
+    {
+        if (_isDragging)
+        {
+            return;
+        }
+
+        // Konvertieren der Mauskoordinaten in den Clip-Space von WebGL (-1 bis 1)
+        // Die Y-Koordinate wird invertiert, da die Bildschirmkoordinaten (0,0 oben links) und der WebGL Clip Space (0,0 in der Mitte, -1,-1 unten links) unterschiedlich sind.
+        var clipX = (float)(e.OffsetX / _canvasReference.Width) * 2f - 1f;
+        var clipY = 1f - (float)(e.OffsetY / _canvasReference.Height) * 2f;
+
+        // Transformation vom Clip-Space in den World-Space (den Raum unseres Gitters, von -1 bis 1), unter Berücksichtigung von Pan und Zoom
+        var worldX = (clipX - _panX) / _zoom;
+        var worldY = (clipY - _panY) / _zoom;
+
+        // Überprüfen, ob der Klick außerhalb des World-Space [-1, 1] liegt
+        if (worldX < -1f || worldX > 1f || worldY < -1f || worldY > 1f)
+        {
+            return;
+        }
+
+        // Konvertieren von World-Space-Koordinaten in Gitter-Koordinaten
+        var gridX = (int)Math.Floor((worldX + 1f) / 2f * _length);
+        var gridY = (int)Math.Floor((worldY + 1f) / 2f * _length);
+
+        // Überprüfen, ob die Gitter-Koordinaten gültig sind
+        if (gridX >= 0 && gridX < _length && gridY >= 0 && gridY < _length)
+        {
+            var pixel = _pixels[gridX, gridY];
+            pixel.R = (float)1;
+            pixel.G = (float)0;
+            pixel.B = (float)0;
+
+            await Rerender();
+        }
+    }
+
+    private Task HandleWheel(WheelEventArgs e)
+    {
+        if (e.DeltaY > 0)
+        {
+            _zoom *= 0.9f;
+        }
+        else
+        {
+            _zoom *= 1.1f;
+        }
+
+        return Rerender();
+    }
+
+    private void HandleMouseDown(MouseEventArgs e)
+    {
+        _isPanning = true;
+        _isDragging = false;
+        _lastMouseX = e.ClientX;
+        _lastMouseY = e.ClientY;
+    }
+
+    private void HandleMouseUp(MouseEventArgs e)
+    {
+        _isPanning = false;
+    }
+
+    private Task HandleMouseMove(MouseEventArgs e)
+    {
+        if (!_isPanning)
+        {
+            return Task.CompletedTask;
+        }
+
+        _isDragging = true;
+
+        var dx = (float)(e.ClientX - _lastMouseX);
+        var dy = (float)(e.ClientY - _lastMouseY);
+
+        _panX += dx * 2f / _canvasReference.Width;
+        _panY -= dy * 2f / _canvasReference.Height;
+
+        _lastMouseX = e.ClientX;
+        _lastMouseY = e.ClientY;
+
+        return Rerender();
+    }
+
 
     private async Task Rerender()
     {
@@ -221,6 +433,8 @@
 
     private async Task StartFpsSimulation()
     {
+        InitializePixelGrid();
+        
         Stopwatch stopwatch = Stopwatch.StartNew();
 
         var runs = 0;
@@ -232,10 +446,12 @@
             await Task.Delay(1);
             runs += 1;
         }
+
         stopwatch.Stop();
 
         _framesRendered = runs;
         _averageFrameRenderTime = waitTime / runs;
         _averageFPS = 1000 / _averageFrameRenderTime;
     }
+
 }
